@@ -23,7 +23,7 @@ This URL is what goes into Blocktivity's `txEndpoint` field.
 
 ```json
 {
-  "transactions": 32169,
+  "transactions": 32237,
   "period_start": "2026-10-14T22:30:00Z",
   "period_end":   "2026-10-15T22:30:00Z",
   "updated_at":   "2026-10-15T22:31:10Z",
@@ -40,13 +40,23 @@ This URL is what goes into Blocktivity's `txEndpoint` field.
 
 ### Count semantics
 
-- One Elasticsearch document = one operation. `block_data.trx_id.keyword` is
-  therefore deduplicated with a cardinality aggregation to count **signed
-  transactions**, not operations (~32k vs ~113k per day).
+- The index stores **one document per (operation × impacted account)**, so
+  counting documents overcounts and `cardinality` aggregations are only
+  approximate. Distinct transactions are therefore enumerated exactly with a
+  paginated `composite` aggregation over `block_data.trx_id.keyword`
+  (~5 pages of 10k, ~2 s total), counting **signed transactions**, not
+  operations (~32k vs ~113k per day).
 - `operation_history.is_virtual: false` excludes chain-generated virtual
-  operations.
-- Cardinality is an approximate-distinct count; `precision_threshold` is set to
-  40000 so counts in the ~30k range are effectively exact.
+  operations (e.g. `fill_order`, `asset_settle_cancel`).
+
+### Keeping the schedule alive
+
+GitHub disables scheduled workflows in public repositories after **60 days
+without commits**, not after 60 days without scheduled activity (see the
+[GitHub docs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows)).
+This workflow commits a refreshed `docs/tx-daily.json` every hour, so the
+60-day clock is reset continuously and the schedule runs indefinitely.
+If it ever stops, re-enable it once in the Actions tab.
 
 ## Blocktivity submission notes
 

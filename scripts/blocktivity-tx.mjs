@@ -19,10 +19,13 @@
  *   Kibana: https://kibana.bitshares.dev
  *   Index:  bitshares-*  (time field: block_data.block_time)
  *
- * Count semantics: signed (non-virtual) transactions in the last 24 hours.
- * `block_data.trx_id.keyword` is one document per operation, so a cardinality
- * aggregation over it yields distinct signed transactions; virtual operations
- * (fill_order, asset_settle_cancel, ...) are filtered out.
+ * Count semantics: distinct signed (non-virtual) transactions in the last
+ * 24 hours. The Elasticsearch index stores one document per (operation x
+ * impacted account), so counting documents overcounts and a `cardinality`
+ * aggregation is only approximate. Distinct transactions are therefore
+ * enumerated exactly with a paginated `composite` aggregation over
+ * `block_data.trx_id.keyword`, filtered to `operation_history.is_virtual:false`
+ * (chain-generated virtual operations such as fill_order are excluded).
  */
 
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -38,32 +41,24 @@ const INDEX = process.env.KIBANA_INDEX || 'bitshares-*';
 const REQUEST_TIMEOUT_MS = 30_000;
 const RETRIES = 3;
 
+// composite page size is bounded by the cluster's search.max_buckets (10k).
+const COMPOSITE_PAGE = 10_000;
+const MAX_PAGES = 200; // hard stop against a runaway pagination loop
+
 const TRANSACTION_DEFINITION =
   'Successful user-submitted transactions; virtual/system operations ' +
   '(e.g. fill_order, asset_settle_cancel) excluded.';
 
-// ─── Kibana query ────────────────────────────────────────────────────────────
+// ─── Kibana query helpers ────────────────────────────────────────────────────
 
-function buildQuery(from, to) {
-  return {
-    size: 0,
-    track_total_hits: false,
-    query: {
-      bool: {
-        filter: [
-          { range: { 'block_data.block_time': { gte: from, lte: to, format: 'strict_date_optional_time' } } },
-          { term: { 'operation_history.is_virtual': false } },
-        ],
-      },
-    },
-    aggs: {
-      transactions: { cardinality: { field: 'block_data.trx_id.keyword', precision_threshold: 40000 } },
-      operations: { value_count: { field: 'operation_id_num' } },
-      from_block: { min: { field: 'block_data.block_num' } },
-      to_block: { max: { field: 'block_data.block_num' } },
-    },
-  };
-}
+const windowFilter = (from, to) => ({
+  bool: {
+    filter: [
+      { range: { 'block_data.block_time': { gte: from, lte: to, format: 'strict_date_optional_time' } } },
+      { term: { 'operation_history.is_virtual': false } },
+    ],
+  },
+});
 
 async function kibanaSearch(query) {
   const url =
@@ -90,33 +85,76 @@ async function kibanaSearch(query) {
   throw new Error(`Kibana query failed after ${RETRIES} attempts: ${lastError?.message || lastError}`);
 }
 
+/** Block-number bounds of the window (informational, for audibility). */
+async function fetchBlockRange(from, to) {
+  const res = await kibanaSearch({
+    size: 0,
+    track_total_hits: false,
+    query: windowFilter(from, to),
+    aggs: {
+      from_block: { min: { field: 'block_data.block_num' } },
+      to_block: { max: { field: 'block_data.block_num' } },
+    },
+  });
+  const agg = res.aggregations || {};
+  const fromBlock = Number(agg.from_block?.value);
+  const toBlock = Number(agg.to_block?.value);
+  return {
+    from_block: Number.isFinite(fromBlock) ? fromBlock : undefined,
+    to_block: Number.isFinite(toBlock) ? toBlock : undefined,
+  };
+}
+
+/** Exact number of distinct non-virtual transactions in the window. */
+async function countDistinctTransactions(from, to) {
+  let after = null;
+  let total = 0;
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const composite = {
+      size: COMPOSITE_PAGE,
+      sources: [{ trx: { terms: { field: 'block_data.trx_id.keyword' } } }],
+    };
+    if (after) composite.after = after;
+
+    const res = await kibanaSearch({
+      size: 0,
+      track_total_hits: false,
+      query: windowFilter(from, to),
+      aggs: { transactions: { composite } },
+    });
+
+    const agg = res.aggregations?.transactions;
+    const buckets = agg?.buckets ?? [];
+    total += buckets.length;
+    after = agg?.after_key;
+
+    if (!after || buckets.length === 0) return total;
+  }
+
+  throw new Error(`composite pagination exceeded ${MAX_PAGES} pages`);
+}
+
 // ─── Payload ─────────────────────────────────────────────────────────────────
 
-function buildPayload(now, es) {
-  const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const agg = es.aggregations || {};
-  const transactions = Math.round(Number(agg.transactions?.value ?? 0));
-
-  const payload = {
+function buildPayload(now, transactions, range) {
+  return {
     transactions,
-    period_start: from.toISOString().replace(/\.\d{3}Z$/, 'Z'),
-    period_end: now.toISOString().replace(/\.\d{3}Z$/, 'Z'),
-    updated_at: now.toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    period_start: iso(now.getTime() - 24 * 60 * 60 * 1000),
+    period_end: iso(now.getTime()),
+    updated_at: iso(now.getTime()),
     chain: 'BitShares',
     chain_id: 'mainnet',
     period: '24h',
+    ...(range.from_block !== undefined ? { from_block: range.from_block } : {}),
+    ...(range.to_block !== undefined ? { to_block: range.to_block } : {}),
     transaction_definition: TRANSACTION_DEFINITION,
     failed_transactions_included: false,
     system_transactions_included: false,
   };
-
-  const fromBlock = Number(agg.from_block?.value);
-  const toBlock = Number(agg.to_block?.value);
-  if (Number.isFinite(fromBlock)) payload.from_block = fromBlock;
-  if (Number.isFinite(toBlock)) payload.to_block = toBlock;
-
-  return payload;
 }
+
+const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 function validate(payload) {
   const errors = [];
@@ -135,13 +173,15 @@ function validate(payload) {
 
 async function main() {
   const now = new Date();
-  const query = buildQuery(
-    new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
-    now.toISOString(),
-  );
+  const from = iso(now.getTime() - 24 * 60 * 60 * 1000);
+  const to = iso(now.getTime());
 
-  const es = await kibanaSearch(query);
-  const payload = buildPayload(now, es);
+  const [transactions, range] = await Promise.all([
+    countDistinctTransactions(from, to),
+    fetchBlockRange(from, to),
+  ]);
+
+  const payload = buildPayload(now, transactions, range);
 
   const errors = validate(payload);
   if (errors.length) {
@@ -153,7 +193,7 @@ async function main() {
 
   console.log(
     `Wrote ${OUT_PATH}\n` +
-      `  transactions : ${payload.transactions}\n` +
+      `  transactions : ${payload.transactions} (exact distinct trx)\n` +
       `  blocks       : ${payload.from_block} → ${payload.to_block}\n` +
       `  updated_at   : ${payload.updated_at}`,
   );
