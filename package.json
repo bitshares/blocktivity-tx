@@ -1,0 +1,13 @@
+{
+  "name": "blocktivity-tx",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Blocktivity daily-transaction endpoint for BitShares (Kibana-sourced, GitHub Pages-hosted)",
+  "type": "module",
+  "scripts": {
+    "tx": "node scripts/blocktivity-tx.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
