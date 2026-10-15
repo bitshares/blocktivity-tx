@@ -1,14 +1,14 @@
 {
   "transactions": 32212,
-  "period_start": "2026-10-14T23:36:05Z",
-  "period_end": "2026-10-15T23:36:05Z",
-  "updated_at": "2026-10-15T23:36:05Z",
+  "period_start": "2026-10-14T23:37:02Z",
+  "period_end": "2026-10-15T23:37:02Z",
+  "updated_at": "2026-10-15T23:37:02Z",
   "chain": "BitShares",
   "chain_id": "mainnet",
   "period": "24h",
   "transaction_definition": "Successful user-submitted transactions; virtual/system operations (e.g. fill_order, asset_settle_cancel) excluded.",
   "failed_transactions_included": false,
   "system_transactions_included": false,
-  "from_block": 115230330,
-  "to_block": 115259056
+  "from_block": 115230348,
+  "to_block": 115259075
 }
