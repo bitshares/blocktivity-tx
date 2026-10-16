@@ -10,8 +10,8 @@ result as a static JSON file via GitHub Pages.
 
 ## Endpoint
 
-Once GitHub Pages is enabled (Settings → Pages → Deploy from a branch →
-`main` / `/docs`):
+GitHub Pages serves the `gh-pages` branch (Settings → Pages → Deploy from a
+branch → `gh-pages` / root):
 
 ```
 https://<owner>.github.io/blocktivity-tx/tx-daily.json
@@ -48,15 +48,31 @@ This URL is what goes into Blocktivity's `txEndpoint` field.
   operations (~32k vs ~113k per day).
 - `operation_history.is_virtual: false` excludes chain-generated virtual
   operations (e.g. `fill_order`, `asset_settle_cancel`).
+- BitShares activity is predominantly DEX order operations rather than plain
+  value transfers; "transactions" here means the signed transactions a user
+  broadcasts, of any operation type.
 
-### Keeping the schedule alive
+## Publication model
+
+`main` holds only code. Each run writes `docs/tx-daily.json` on the runner and
+force-pushes the contents of `docs/` as a **single commit** to the `gh-pages`
+branch, so:
+
+- `main` history stays clean and reviewable,
+- the published branch always has exactly one commit,
+- GitHub Pages serves the latest payload.
+
+Because every run pushes a commit, the repository is never inactive for the
+60 days that would auto-disable the schedule (see below).
+
+## Keeping the schedule alive
 
 GitHub disables scheduled workflows in public repositories after **60 days
 without commits**, not after 60 days without scheduled activity (see the
 [GitHub docs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows)).
-This workflow commits a refreshed `docs/tx-daily.json` every hour, so the
-60-day clock is reset continuously and the schedule runs indefinitely.
-If it ever stops, re-enable it once in the Actions tab.
+This workflow pushes a refreshed `gh-pages` commit every hour, so the 60-day
+clock is reset continuously and the schedule runs indefinitely. If it ever
+stops, re-enable it once in the Actions tab.
 
 ## Blocktivity submission notes
 
@@ -82,7 +98,11 @@ submitting organisation.
 ## Local run
 
 ```bash
-npm run tx        # writes docs/tx-daily.json
+npm run tx        # writes docs/tx-daily.json (not committed; ignored)
 ```
 
 Optional env overrides: `KIBANA_URL`, `KIBANA_INDEX`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

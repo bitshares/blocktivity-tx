@@ -1,2 +1,5 @@
 node_modules/
 *.log
+
+# Generated at run time and published to the gh-pages branch; never tracked on main.
+docs/tx-daily.json

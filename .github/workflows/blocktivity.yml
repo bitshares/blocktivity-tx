@@ -28,14 +28,17 @@ jobs:
       - name: Query Kibana and write docs/tx-daily.json
         run: node scripts/blocktivity-tx.mjs
 
-      - name: Commit refreshed payload
+      - name: Publish data branch (single commit)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          cd docs
+          git init -q -b gh-pages
           git config user.name  "blocktivity-bot"
           git config user.email "blocktivity-bot@users.noreply.github.com"
-          git add docs/tx-daily.json
-          if git diff --cached --quiet; then
-            echo "No change."
-          else
-            git commit -m "tx-daily $(date -u +%FT%TZ)"
-            git push
-          fi
+          touch .nojekyll
+          git add -A
+          git commit -q -m "tx-daily $(date -u +%FT%TZ)"
+          git push -f \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            gh-pages:gh-pages
