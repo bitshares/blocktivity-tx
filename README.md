@@ -80,7 +80,7 @@ stops, re-enable it once in the Actions tab.
 |---|---|
 | `name` | BitShares |
 | `symbol` | BTS |
-| `website` | https://bitshares.org |
+| `website` | https://bitshares.github.io/ |
 | `txDefinition.window` | `rolling-24h` |
 | `txDefinition.successful` | `included` |
 | `txDefinition.failed` | `excluded` |
